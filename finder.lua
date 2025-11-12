@@ -8,34 +8,88 @@ local targetUsernames = getgenv().TargetUsernames or {}
 -- Configuration
 local API_BASE = "https://users.roblox.com/v1"
 local FRIENDS_API = "https://friends.roblox.com/v1"
+local REQUEST_DELAY = 1.5 -- Delay between requests in seconds
 
--- Helper function to make HTTP requests
-local function makeRequest(url)
-    local success, result = pcall(function()
-        return game:HttpGet(url)
-    end)
-    if success then
-        return HttpService:JSONDecode(result)
+-- Helper function to wait
+local function wait(seconds)
+    local start = tick()
+    repeat until tick() - start >= seconds
+end
+
+-- Helper function to make HTTP requests with retry logic
+local function makeRequest(url, maxRetries)
+    maxRetries = maxRetries or 3
+    local retries = 0
+    
+    while retries < maxRetries do
+        local success, result = pcall(function()
+            return game:HttpGet(url)
+        end)
+        
+        if success then
+            local decodeSuccess, data = pcall(function()
+                return HttpService:JSONDecode(result)
+            end)
+            
+            if decodeSuccess then
+                return data
+            end
+        end
+        
+        retries = retries + 1
+        if retries < maxRetries then
+            print("      Retrying... (" .. retries .. "/" .. maxRetries .. ")")
+            wait(REQUEST_DELAY * 2)
+        end
     end
+    
+    return nil
+end
+
+-- Helper function to make POST requests with retry logic
+local function makePostRequest(url, body, maxRetries)
+    maxRetries = maxRetries or 3
+    local retries = 0
+    
+    while retries < maxRetries do
+        local success, result = pcall(function()
+            return game:HttpPost(url, body)
+        end)
+        
+        if success then
+            local decodeSuccess, data = pcall(function()
+                return HttpService:JSONDecode(result)
+            end)
+            
+            if decodeSuccess then
+                return data
+            end
+        end
+        
+        retries = retries + 1
+        if retries < maxRetries then
+            print("      Retrying... (" .. retries .. "/" .. maxRetries .. ")")
+            wait(REQUEST_DELAY * 2)
+        end
+    end
+    
     return nil
 end
 
 -- Get user ID from username
 local function getUserId(username)
     local url = API_BASE .. "/usernames/users"
-    local success, result = pcall(function()
-        return game:HttpPost(url, HttpService:JSONEncode({
-            usernames = {username},
-            excludeBannedUsers = true
-        }))
-    end)
+    local data = makePostRequest(url, HttpService:JSONEncode({
+        usernames = {username},
+        excludeBannedUsers = true
+    }))
     
-    if success then
-        local data = HttpService:JSONDecode(result)
-        if data.data and #data.data > 0 then
-            return {data.data[1].id}
-        end
+    wait(REQUEST_DELAY)
+    
+    if data and data.data and #data.data > 0 then
+        return {data.data[1].id}
     end
+    
     return nil
 end
 
@@ -54,6 +108,8 @@ local function searchByDisplayName(displayName)
         end
         
         local data = makeRequest(url)
+        wait(REQUEST_DELAY)
+        
         if data and data.data then
             for _, user in ipairs(data.data) do
                 if user.displayName and user.displayName:lower() == displayName:lower() then
@@ -80,19 +136,28 @@ end
 local function getFriends(userId)
     local friends = {}
     local cursor = ""
+    local pageCount = 0
     
     repeat
-        local url = FRIENDS_API .. "/users/" .. userId .. "/friends?userSort=StatusFrequents"
+        local url = FRIENDS_API .. "/users/" .. userId .. "/friends?userSort=StatusFrequents&limit=50"
         if cursor ~= "" then
             url = url .. "&cursor=" .. cursor
         end
         
         local data = makeRequest(url)
+        wait(REQUEST_DELAY)
+        
         if data and data.data then
             for _, friend in ipairs(data.data) do
                 table.insert(friends, friend.id)
             end
             cursor = data.nextPageCursor or ""
+            pageCount = pageCount + 1
+            
+            -- Longer delay every 5 pages to avoid rate limits
+            if pageCount % 5 == 0 then
+                wait(REQUEST_DELAY * 2)
+            end
         else
             break
         end
@@ -135,25 +200,30 @@ local function findMutuals()
         end
     end
     
-    print("[STEP 2] Scanning Friend Lists\n")
+    print("[STEP 2] Scanning Friend Lists (this may take a while)\n")
     local allFriendsByUser = {}
     local totalScanned = 0
     
     for identifier, userIds in pairs(allUserIds) do
         for _, userId in ipairs(userIds) do
+            print("    Scanning user ID: " .. userId .. "...")
             local friends = getFriends(userId)
             allFriendsByUser[userId] = friends
             totalScanned = totalScanned + 1
             
+            wait(REQUEST_DELAY)
+            
             local url = API_BASE .. "/users/" .. userId
             local data = makeRequest(url)
+            wait(REQUEST_DELAY)
+            
             local displayText = data and data.name or ("ID:" .. userId)
             
-            print("    " .. displayText .. " → " .. #friends .. " friends")
+            print("    " .. displayText .. " → " .. #friends .. " friends\n")
         end
     end
     
-    print("\n[STEP 3] Finding Mutuals\n")
+    print("[STEP 3] Finding Mutuals\n")
     
     local mutualCounts = {}
     local allUserIdsList = {}
@@ -180,7 +250,7 @@ local function findMutuals()
         end
     end
     
-    print("    Checking " .. totalScanned .. " account(s)...\n")
+    print("    Analyzed " .. totalScanned .. " account(s)\n")
     
     print("╔══════════════════════════════════════════════╗")
     print("║                   RESULTS                    ║")
@@ -191,6 +261,8 @@ local function findMutuals()
         for i, mutualId in ipairs(mutuals) do
             local url = API_BASE .. "/users/" .. mutualId
             local data = makeRequest(url)
+            wait(REQUEST_DELAY)
+            
             if data then
                 local displayInfo = data.displayName and (" (@" .. data.displayName .. ")") or ""
                 print("  [" .. i .. "] " .. data.name .. displayInfo)
