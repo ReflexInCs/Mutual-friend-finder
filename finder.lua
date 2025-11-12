@@ -1,7 +1,6 @@
 -- Roblox Mutual Friends Finder
--- Usage: getgenv().TargetUsernames = {"user1", "user2", "user3"}
--- Usage with display names: getgenv().TargetUsernames = {"@DisplayName1", "user2"}
--- Then loadstring this script
+-- Created by: ReflexInCs
+-- GitHub: https://github.com/ReflexInCs/Mutual-friend-finder
 
 local HttpService = game:GetService("HttpService")
 local targetUsernames = getgenv().TargetUsernames or {}
@@ -46,7 +45,7 @@ local function searchByDisplayName(displayName)
     local cursor = ""
     local count = 0
     
-    print("  🔎 Searching for display name: '" .. displayName .. "'")
+    print("    Searching display name: " .. displayName)
     
     repeat
         local url = API_BASE .. "/users/search?keyword=" .. HttpService:UrlEncode(displayName) .. "&limit=100"
@@ -57,11 +56,10 @@ local function searchByDisplayName(displayName)
         local data = makeRequest(url)
         if data and data.data then
             for _, user in ipairs(data.data) do
-                -- Check if display name matches exactly (case-insensitive)
                 if user.displayName and user.displayName:lower() == displayName:lower() then
                     table.insert(userIds, user.id)
                     count = count + 1
-                    print("    ↳ Found: " .. user.name .. " (@" .. user.displayName .. ") → ID: " .. user.id)
+                    print("      → " .. user.name .. " (@" .. user.displayName .. ")")
                 end
             end
             cursor = data.nextPageCursor or ""
@@ -69,9 +67,8 @@ local function searchByDisplayName(displayName)
             break
         end
         
-        -- Limit to prevent infinite loops
         if count >= 50 then
-            print("    ⚠️  Limited to first 50 matches")
+            print("      Limited to 50 matches")
             break
         end
     until cursor == ""
@@ -106,45 +103,39 @@ end
 
 -- Find mutual friends
 local function findMutuals()
-    print("\n╔════════════════════════════════════════╗")
-    print("║   Roblox Mutual Friends Finder       ║")
-    print("╚════════════════════════════════════════╝\n")
+    print("\n╔══════════════════════════════════════════════╗")
+    print("║     Mutual Friends Finder by ReflexInCs     ║")
+    print("╚══════════════════════════════════════════════╝\n")
     
     if #targetUsernames < 2 then
-        print("❌ Error: Need at least 2 usernames/display names")
+        print("[ERROR] Need at least 2 usernames/display names\n")
         return
     end
     
-    -- Get user IDs
-    print("📋 Fetching user IDs...")
+    print("[STEP 1] Resolving Identifiers\n")
     local allUserIds = {}
     
     for _, identifier in ipairs(targetUsernames) do
         local userIds
         
-        -- Check if it's a display name (starts with @)
         if identifier:sub(1, 1) == "@" then
             local displayName = identifier:sub(2)
             userIds = searchByDisplayName(displayName)
         else
+            print("    Fetching: " .. identifier)
             userIds = getUserId(identifier)
         end
         
         if userIds and #userIds > 0 then
             allUserIds[identifier] = userIds
-            if #userIds == 1 then
-                print("  ✓ " .. identifier .. " → 1 account")
-            else
-                print("  ✓ " .. identifier .. " → " .. #userIds .. " accounts found")
-            end
+            print("    Found: " .. #userIds .. " account(s)\n")
         else
-            print("  ✗ " .. identifier .. " → Not found")
+            print("    [ERROR] Not found: " .. identifier .. "\n")
             return
         end
     end
     
-    -- Get friends for each user
-    print("\n🔍 Scanning friend lists...")
+    print("[STEP 2] Scanning Friend Lists\n")
     local allFriendsByUser = {}
     local totalScanned = 0
     
@@ -154,29 +145,25 @@ local function findMutuals()
             allFriendsByUser[userId] = friends
             totalScanned = totalScanned + 1
             
-            -- Get username for display
             local url = API_BASE .. "/users/" .. userId
             local data = makeRequest(url)
             local displayText = data and data.name or ("ID:" .. userId)
             
-            print("  • " .. displayText .. ": " .. #friends .. " friends")
+            print("    " .. displayText .. " → " .. #friends .. " friends")
         end
     end
     
-    print("\n⚙️  Calculating mutuals across " .. totalScanned .. " account(s)...")
+    print("\n[STEP 3] Finding Mutuals\n")
     
-    -- Find mutual friends across ALL accounts
     local mutualCounts = {}
     local allUserIdsList = {}
     
-    -- Flatten all user IDs
     for _, userIds in pairs(allUserIds) do
         for _, userId in ipairs(userIds) do
             table.insert(allUserIdsList, userId)
         end
     end
     
-    -- Count how many times each friend appears
     for _, userId in ipairs(allUserIdsList) do
         local friends = allFriendsByUser[userId]
         if friends then
@@ -186,7 +173,6 @@ local function findMutuals()
         end
     end
     
-    -- Find friends that appear in ALL accounts
     local mutuals = {}
     for friendId, count in pairs(mutualCounts) do
         if count == #allUserIdsList then
@@ -194,26 +180,28 @@ local function findMutuals()
         end
     end
     
-    -- Display results
-    print("\n╔════════════════════════════════════════╗")
-    print("║            RESULTS                     ║")
-    print("╚════════════════════════════════════════╝\n")
+    print("    Checking " .. totalScanned .. " account(s)...\n")
+    
+    print("╔══════════════════════════════════════════════╗")
+    print("║                   RESULTS                    ║")
+    print("╚══════════════════════════════════════════════╝\n")
     
     if #mutuals > 0 then
-        print("✨ Found " .. #mutuals .. " mutual friend(s):\n")
-        for _, mutualId in ipairs(mutuals) do
+        print("Found " .. #mutuals .. " mutual friend(s):\n")
+        for i, mutualId in ipairs(mutuals) do
             local url = API_BASE .. "/users/" .. mutualId
             local data = makeRequest(url)
             if data then
                 local displayInfo = data.displayName and (" (@" .. data.displayName .. ")") or ""
-                print("  👤 " .. data.name .. displayInfo .. " → ID: " .. mutualId)
+                print("  [" .. i .. "] " .. data.name .. displayInfo)
             end
         end
+        print("\n")
     else
-        print("😔 No mutual friends found across all accounts")
+        print("No mutual friends found\n")
     end
     
-    print("\n" .. string.rep("─", 42))
+    print("══════════════════════════════════════════════\n")
 end
 
 -- Run the script
